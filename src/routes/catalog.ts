@@ -36,22 +36,32 @@ function fail(err: unknown): never {
  * catalog-service routes. Every request is authenticated (identity JWT → userId),
  * bound to an org via `X-Org-Id` whose membership is verified against org-service
  * (the PDP) by forwarding the caller's token. The org id is the foldbase tenant.
+ *
+ * Routes live at the service ROOT. A gateway publishes the realm at
+ * `/v1/catalog/...` and strips that prefix (ADR-042 §4), so the service never
+ * encodes where it happens to be mounted; app.ts also mounts them under `/v1`
+ * for callers that predate the gateway.
  */
 export function catalogRouter(store: Store, orgBaseUrl: string) {
   const app = new Hono()
   app.use('*', requireAuth)
 
   app.use('*', async (c, next) => {
-    const orgId = c.req.header('X-Org-Id')
-    if (!orgId) {
+    // `X-Org-Id` may carry an id, a slug or a short id (ADR-042 §3), and the org
+    // id is also the storage tenant — so the header is resolved before anything
+    // is stored against it. Taken verbatim, `acme` and the org's real id would
+    // be two separate tenants for one organization, and which one you saw would
+    // depend on which client wrote last.
+    const orgRef = c.req.header('X-Org-Id')
+    if (!orgRef) {
       return c.json({ error: 'org_required', message: 'Missing X-Org-Id — run `use <org>` first' }, 400)
     }
     const bearer = c.req.header('Authorization')!.slice(7)
     const org = createOrgClient({ baseUrl: orgBaseUrl, token: bearer })
     try {
-      const { role } = await org.effectiveRole(orgId)
+      const { role, via } = await org.effectiveRole(orgRef)
       if (role === 'none') return c.json({ error: 'forbidden', message: 'Not a member of this org' }, 403)
-      c.set('orgId' as never, orgId as never)
+      c.set('orgId' as never, (via?.scopeId ?? orgRef) as never)
     } catch (e) {
       if (e instanceof OrgError && e.status === 404) {
         return c.json({ error: 'org_not_found', message: 'Active org does not exist — run `use <org>` with a valid org' }, 404)
@@ -64,7 +74,7 @@ export function catalogRouter(store: Store, orgBaseUrl: string) {
   const orgOf = (c: { get: (k: string) => unknown }) => c.get('orgId') as string
   const actorOf = (c: { get: (k: string) => unknown }) => (c.get('auth') as { userId: string }).userId
 
-  app.get('/v1/catalog', async (c) => {
+  app.get('/catalog', async (c) => {
     const orgId = orgOf(c)
     const sku = c.req.query('sku')
     if (sku) {
@@ -77,23 +87,23 @@ export function catalogRouter(store: Store, orgBaseUrl: string) {
     return c.json({ products: await store.listProducts(orgId, { limit, offset }) })
   })
 
-  app.get('/v1/catalog/:ref', async (c) => {
+  app.get('/catalog/:ref', async (c) => {
     const product = await store.getProduct(orgOf(c), c.req.param('ref'))
     if (!product) return c.json({ error: 'not_found', message: 'Product not found' }, 404)
     return c.json({ product })
   })
 
-  app.post('/v1/catalog', zValidator('json', CreateSchema), async (c) => {
+  app.post('/catalog', zValidator('json', CreateSchema), async (c) => {
     const product = await store.createProduct(orgOf(c), c.req.valid('json'), actorOf(c)).catch(fail)
     return c.json({ product }, 201)
   })
 
-  app.patch('/v1/catalog/:ref', zValidator('json', UpdateSchema), async (c) => {
+  app.patch('/catalog/:ref', zValidator('json', UpdateSchema), async (c) => {
     const product = await store.updateProduct(orgOf(c), c.req.param('ref'), c.req.valid('json'), actorOf(c)).catch(fail)
     return c.json({ product })
   })
 
-  app.delete('/v1/catalog/:ref', async (c) => {
+  app.delete('/catalog/:ref', async (c) => {
     await store.archiveProduct(orgOf(c), c.req.param('ref'), actorOf(c)).catch(fail)
     return c.body(null, 204)
   })

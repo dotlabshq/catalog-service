@@ -44,6 +44,11 @@ export interface HttpClient {
  * service validates. Every call carries the org id (X-Org-Id) — products are
  * per-org, and the identity JWT is org-less by design (ADR-009).
  */
+/**
+ * Paths here are the service's own — `/catalog`, not `/v1/catalog`. A gateway
+ * publishes the service at `/v1/<name>` and strips that prefix (ADR-042 §4), so
+ * the client says what the service serves and `baseUrl` says where it is.
+ */
 export class CatalogClient {
   private readonly baseUrl: string
   private readonly fetchImpl: typeof fetch
@@ -101,27 +106,27 @@ export class CatalogClient {
     if (opts.limit !== undefined) q.set('limit', String(opts.limit))
     if (opts.offset !== undefined) q.set('offset', String(opts.offset))
     const qs = q.toString()
-    const { products } = await this.api<{ products: Product[] }>('GET', `/v1/catalog${qs ? `?${qs}` : ''}`)
+    const { products } = await this.api<{ products: Product[] }>('GET', `/catalog${qs ? `?${qs}` : ''}`)
     return products
   }
   async get(ref: string): Promise<Product> {
-    const { product } = await this.api<{ product: Product }>('GET', `/v1/catalog/${ref}`)
+    const { product } = await this.api<{ product: Product }>('GET', `/catalog/${ref}`)
     return product
   }
   async getBySku(sku: string): Promise<Product> {
-    const { product } = await this.api<{ product: Product }>('GET', `/v1/catalog?sku=${encodeURIComponent(sku)}`)
+    const { product } = await this.api<{ product: Product }>('GET', `/catalog?sku=${encodeURIComponent(sku)}`)
     return product
   }
   async create(input: CreateProductInput): Promise<Product> {
-    const { product } = await this.api<{ product: Product }>('POST', '/v1/catalog', input)
+    const { product } = await this.api<{ product: Product }>('POST', '/catalog', input)
     return product
   }
   async update(ref: string, input: UpdateProductInput): Promise<Product> {
-    const { product } = await this.api<{ product: Product }>('PATCH', `/v1/catalog/${ref}`, input)
+    const { product } = await this.api<{ product: Product }>('PATCH', `/catalog/${ref}`, input)
     return product
   }
   async delete(ref: string): Promise<void> {
-    await this.api('DELETE', `/v1/catalog/${ref}`)
+    await this.api('DELETE', `/catalog/${ref}`)
   }
 }
 

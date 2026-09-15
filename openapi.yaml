@@ -1,0 +1,216 @@
+openapi: 3.1.0
+info:
+  title: catalog-service
+  version: "1.0"
+  description: |
+    What an organization sells: products, their SKUs, and a list price. One
+    record per product, scoped to an organization.
+
+    A list price is what a thing costs before anyone negotiates. Discounts,
+    plans and metered usage are billing-service's business; an invoice line
+    carries the price it was actually charged at, not a pointer back to here.
+
+    **Every request names an org.** `X-Org-Id` carries it — an id, a slug or a
+    short id — and this service asks org-service whether the caller is a member.
+    The resolved org id is also the storage tenant, so two organizations'
+    catalogs are separated by the store rather than by a column somebody must
+    remember to filter on.
+
+    Routes live at the service root; a gateway publishes them at
+    `/v1/catalog/...` and strips that prefix (ADR-042 §4). `/v1` is also mounted
+    here for callers that predate the gateway.
+
+servers:
+  - url: https://example.com/v1/catalog
+    description: Behind a gateway
+  - url: http://127.0.0.1:3009
+    description: Direct, for local development
+
+tags:
+  - name: discovery
+  - name: catalog
+
+security:
+  - bearer: []
+
+paths:
+  /healthz:
+    get:
+      tags: [discovery]
+      summary: Liveness
+      security: []
+      responses:
+        "200": { description: ok }
+
+  /.well-known/service:
+    get:
+      tags: [discovery]
+      summary: What this service is
+      security: []
+      responses:
+        "200":
+          description: The manifest
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ServiceManifest" }
+
+  /catalog:
+    get:
+      tags: [catalog]
+      summary: List products, or resolve one by SKU
+      description: |
+        `?sku=` looks up the single product carrying that SKU and answers 404
+        when there is none. Without it, a page of the catalog.
+      parameters:
+        - { name: sku, in: query, schema: { type: string } }
+        - { name: category, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 500 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        "200":
+          description: Products, or a single product when sku was given
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  products:
+                    type: array
+                    items: { $ref: "#/components/schemas/Product" }
+                  product: { $ref: "#/components/schemas/Product" }
+        "400": { description: org_required — no X-Org-Id }
+        "403": { description: Not a member of this org }
+        "404": { description: No product with that SKU }
+    post:
+      tags: [catalog]
+      summary: Add a product
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProductInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  product: { $ref: "#/components/schemas/Product" }
+        "409": { description: That SKU already belongs to another product }
+        "422": { description: Malformed body }
+
+  /catalog/{ref}:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: string }
+        description: The id or the short id.
+    get:
+      tags: [catalog]
+      summary: One product
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  product: { $ref: "#/components/schemas/Product" }
+        "404": { description: No such product in this org }
+    patch:
+      tags: [catalog]
+      summary: Change a product
+      description: |
+        At least one field. Absent fields are left alone.
+
+        Changing a price changes what will be charged next, never what was
+        charged before: an invoice line keeps the price it was written with.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProductInput" }
+      responses:
+        "200":
+          description: Changed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  product: { $ref: "#/components/schemas/Product" }
+        "404": { description: No such product in this org }
+    delete:
+      tags: [catalog]
+      summary: Archive a product
+      description: |
+        It stops appearing in the catalog. The record stays — an invoice that
+        sold this product must still be explicable.
+      responses:
+        "204": { description: Archived }
+        "404": { description: No such product in this org }
+
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    ProductInput:
+      type: object
+      properties:
+        name: { type: string }
+        sku:
+          type: string
+          description: Your own code for this product. Unique per org.
+        description: { type: string }
+        category:
+          type: string
+          description: |
+            Free text. ledger-service reads it to pick a revenue account, so a
+            realm that keeps books should agree on a vocabulary.
+        priceCents:
+          type: integer
+          description: The list price, in minor units. Money is integer cents everywhere.
+        currency: { type: string, minLength: 3, maxLength: 3 }
+        labels:
+          type: array
+          items: { type: string }
+        metadata: { type: object, additionalProperties: true }
+
+    Product:
+      type: object
+      required: [id, shortId, name]
+      properties:
+        id: { type: string }
+        shortId: { type: string }
+        name: { type: string }
+        sku: { type: [string, "null"] }
+        description: { type: [string, "null"] }
+        category: { type: [string, "null"] }
+        priceCents: { type: [integer, "null"] }
+        currency: { type: [string, "null"] }
+        labels:
+          type: array
+          items: { type: string }
+        metadata: { type: object, additionalProperties: true }
+        createdAt: { type: integer }
+        updatedAt: { type: integer }
+
+    ServiceManifest:
+      type: object
+      required: [name, version, api_version]
+      properties:
+        name: { type: string }
+        version: { type: string }
+        api_version: { type: string }
+        openapi_url: { type: string }
+        capabilities:
+          type: array
+          items: { type: string }

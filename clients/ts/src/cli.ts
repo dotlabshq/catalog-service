@@ -62,7 +62,7 @@ export function buildCatalogCommand(deps: CatalogCliDeps): Command {
   const cli = deps.cliName ?? 'cli'
 
   const listProducts = async (opts: { output: string }) => {
-    const res = await http.get<{ products: ProductRow[] }>('/v1/catalog').catch(die)
+    const res = await http.get<{ products: ProductRow[] }>('/catalog').catch(die)
     printOutput(res.products, opts.output, (wide) => {
       table(res.products, [
         { key: 'shortId', label: 'ID' },
@@ -118,7 +118,7 @@ export function buildCatalogCommand(deps: CatalogCliDeps): Command {
           ...(opts.label ? { labels: opts.label } : {}),
           ...(opts.meta ? { metadata: parseKvPairs(opts.meta) } : {}),
         }
-        const res = await http.post<{ product: ProductRow }>('/v1/catalog', body).catch(die)
+        const res = await http.post<{ product: ProductRow }>('/catalog', body).catch(die)
         success(`Product created: ${res.product.name}`)
         kv([['id', res.product.shortId], ['name', res.product.name], ['price', fmtPrice(res.product.priceCents, res.product.currency)]])
       }),
@@ -129,7 +129,7 @@ export function buildCatalogCommand(deps: CatalogCliDeps): Command {
       .description('Show product details')
       .option(...outputOption())
       .action(async (ref: string, opts: { output: string }) => {
-        const res = await http.get<{ product: Record<string, unknown> }>(`/v1/catalog/${ref}`).catch(die)
+        const res = await http.get<{ product: Record<string, unknown> }>(`/catalog/${ref}`).catch(die)
         const p = res.product as Record<string, unknown>
         printOutput(p, opts.output, () => {
           kv([
@@ -173,7 +173,7 @@ export function buildCatalogCommand(deps: CatalogCliDeps): Command {
         if (opts.label !== undefined) body['labels'] = opts.label
         if (opts.meta !== undefined) body['metadata'] = parseKvPairs(opts.meta)
         if (!Object.keys(body).length) { warn('Provide at least one field to update.'); return }
-        const res = await http.patch<{ product: ProductRow }>(`/v1/catalog/${ref}`, body).catch(die)
+        const res = await http.patch<{ product: ProductRow }>(`/catalog/${ref}`, body).catch(die)
         success('Product updated.')
         kv([['id', res.product.shortId], ['name', res.product.name], ['price', fmtPrice(res.product.priceCents, res.product.currency)]])
       }),
@@ -183,7 +183,7 @@ export function buildCatalogCommand(deps: CatalogCliDeps): Command {
     new Command('delete').alias('rm').argument('<ref>')
       .description('Delete a product')
       .action(async (ref: string) => {
-        await http.del(`/v1/catalog/${ref}`).catch(die)
+        await http.del(`/catalog/${ref}`).catch(die)
         success(`Product deleted: ${ref}`)
       }),
   )
