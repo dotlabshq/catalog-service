@@ -24,7 +24,7 @@ const PROD2 = { ...PROD, id: '019f6a3e-2222-7c71-beff-496d1be3fd1f', shortId: 'p
 
 describe('dtab catalog (list)', () => {
   it('default columns: ID → SKU → NAME → PRICE, no full UUID', async () => {
-    mocks.mockGet('/v1/catalog', { products: [PROD, PROD2] })
+    mocks.mockGet('/catalog', { products: [PROD, PROD2] })
     const r = await run(['catalog'])
     expect(r.exitCode).toBe(0)
     expect(r.stdout).toContain('prd9x2')
@@ -35,16 +35,16 @@ describe('dtab catalog (list)', () => {
   })
 
   it('cat + products aliases list', async () => {
-    mocks.mockGet('/v1/catalog', { products: [PROD] })
+    mocks.mockGet('/catalog', { products: [PROD] })
     const a = await run(['cat'])
     expect(a.stdout).toContain('prd9x2')
-    mocks.mockGet('/v1/catalog', { products: [PROD] })
+    mocks.mockGet('/catalog', { products: [PROD] })
     const b = await run(['products'])
     expect(b.stdout).toContain('prd9x2')
   })
 
   it('catalog ls -o wide shows CATEGORY + FULL ID', async () => {
-    mocks.mockGet('/v1/catalog', { products: [PROD] })
+    mocks.mockGet('/catalog', { products: [PROD] })
     const r = await run(['catalog', 'ls', '-o', 'wide'])
     expect(r.stdout).toContain('CATEGORY')
     expect(r.stdout).toContain('widgets')
@@ -53,13 +53,13 @@ describe('dtab catalog (list)', () => {
   })
 
   it('product with no price shows —', async () => {
-    mocks.mockGet('/v1/catalog', { products: [PROD2] })
+    mocks.mockGet('/catalog', { products: [PROD2] })
     const r = await run(['catalog'])
     expect(r.stdout).toContain('—')
   })
 
   it('-o json returns raw array', async () => {
-    mocks.mockGet('/v1/catalog', { products: [PROD] })
+    mocks.mockGet('/catalog', { products: [PROD] })
     const r = await run(['catalog', '-o', 'json'])
     const parsed = JSON.parse(r.stdout)
     expect(parsed[0].shortId).toBe('prd9x2')
@@ -68,7 +68,7 @@ describe('dtab catalog (list)', () => {
 
 describe('dtab catalog create', () => {
   it('converts --price to integer cents + sends fields', async () => {
-    const captured = mocks.mockPostCapture('/v1/catalog', { product: PROD })
+    const captured = mocks.mockPostCapture('/catalog', { product: PROD })
     const r = await run(['catalog', 'create', '--name', 'Blue Widget', '--sku', 'WIDGET-1', '--price', '12.50', '--currency', 'USD', '--category', 'widgets', '--label', 'featured', '--meta', 'color=blue'])
     expect(r.exitCode).toBe(0)
     const body = captured.body as Record<string, unknown>
@@ -94,7 +94,7 @@ describe('dtab catalog create', () => {
 
 describe('dtab catalog get / update / delete', () => {
   it('get by sku shows price + labels', async () => {
-    mocks.mockGet('/v1/catalog/WIDGET-1', { product: PROD })
+    mocks.mockGet('/catalog/WIDGET-1', { product: PROD })
     const r = await run(['catalog', 'get', 'WIDGET-1'])
     expect(r.stdout).toContain('12.50 USD')
     expect(r.stdout).toContain('featured')
@@ -104,14 +104,14 @@ describe('dtab catalog get / update / delete', () => {
   })
 
   it('update sends only changed fields', async () => {
-    const captured = mocks.mockPatchCapture('/v1/catalog/prd9x2', { product: { ...PROD, priceCents: 999 } })
+    const captured = mocks.mockPatchCapture('/catalog/prd9x2', { product: { ...PROD, priceCents: 999 } })
     const r = await run(['catalog', 'update', 'prd9x2', '--price', '9.99', '--currency', 'USD'])
     expect(r.exitCode).toBe(0)
     expect((captured.body as Record<string, unknown>).priceCents).toBe(999)
   })
 
   it('delete (rm alias) works', async () => {
-    mocks.mockDelete('/v1/catalog/prd9x2')
+    mocks.mockDelete('/catalog/prd9x2')
     const r = await run(['catalog', 'rm', 'prd9x2'])
     expect(r.exitCode).toBe(0)
     expect(r.stdout).toContain('prd9x2')
