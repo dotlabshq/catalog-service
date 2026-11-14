@@ -12,6 +12,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@baseworks/auth": "workspace:*",
     "@baseworks/catalog": "workspace:*",
     "@baseworks/core": "workspace:*",
     "@baseworks/foldbase": "workspace:*",
@@ -19,7 +20,6 @@
     "@baseworks/sdk": "workspace:*"
   },
   "devDependencies": {
-    "@baseworks/auth": "workspace:*",
     "@baseworks/tsconfig": "workspace:*",
     "@hono/node-server": "^1.19.14",
     "@hono/zod-validator": "^0.4.3",
