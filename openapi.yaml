@@ -16,14 +16,21 @@ info:
     catalogs are separated by the store rather than by a column somebody must
     remember to filter on.
 
-    Routes live at the service root; a gateway publishes them at
-    `/v1/catalog/...` and strips that prefix (ADR-042 §4). `/v1` is also mounted
-    here for callers that predate the gateway.
+    **Who may.** Permissions are org-service's to say: this service registers its
+    actions with it (`product.read`, `product.write`, `product.archive`), and asks,
+    with the caller's own token, which of them the caller may do in the org.
+    Credentials that may only read (a read-only API token, agent or key) are refused
+    every write with `403 forbidden` naming the missing permission.
+
+    The API is mounted at `/api`; a gateway publishes it at `/v1/catalog/...`,
+    replacing the prefix (workspace ADR 0003). The same routes are still answered at
+    the service root and under `/v1` (legacy aliases, to be removed). The wire is
+    snake_case; a body that still says `priceCents` is read as `price_cents`.
 
 servers:
   - url: https://example.com/v1/catalog
-    description: Behind a gateway
-  - url: http://127.0.0.1:3009
+    description: Behind a gateway (which adds `/api`)
+  - url: http://127.0.0.1:3009/api
     description: Direct, for local development
 
 tags:
@@ -39,6 +46,7 @@ paths:
       tags: [discovery]
       summary: Liveness
       security: []
+      description: At the service root, not under `/api`.
       responses:
         "200": { description: ok }
 
@@ -54,11 +62,21 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ServiceManifest" }
 
+  /openapi.yaml:
+    get:
+      tags: [discovery]
+      summary: This contract
+      security: []
+      responses:
+        "200": { description: The contract, as YAML }
+
   /catalog:
     get:
       tags: [catalog]
       summary: List products, or resolve one by SKU
       description: |
+        Needs `product.read`.
+
         `?sku=` looks up the single product carrying that SKU and answers 404
         when there is none. Without it, a page of the catalog.
       parameters:
@@ -79,11 +97,14 @@ paths:
                     items: { $ref: "#/components/schemas/Product" }
                   product: { $ref: "#/components/schemas/Product" }
         "400": { description: org_required — no X-Org-Id }
-        "403": { description: Not a member of this org }
+        "401": { description: No valid token }
+        "403": { description: Not a member of this org, or the caller lacks `product.read` }
         "404": { description: No product with that SKU }
+        "502": { description: authz_unavailable — org-service could not answer }
     post:
       tags: [catalog]
       summary: Add a product
+      description: Needs `product.write`.
       requestBody:
         required: true
         content:
@@ -98,8 +119,9 @@ paths:
                 type: object
                 properties:
                   product: { $ref: "#/components/schemas/Product" }
-        "409": { description: That SKU already belongs to another product }
+        "409": { description: That SKU already belongs to another product (`sku_taken`) }
         "400": { description: Malformed body }
+        "403": { description: The caller lacks `product.write` (a read-only credential always does) }
 
   /catalog/{ref}:
     parameters:
@@ -107,7 +129,7 @@ paths:
         in: path
         required: true
         schema: { type: string }
-        description: The id or the short id.
+        description: The id, the short id or the SKU.
     get:
       tags: [catalog]
       summary: One product
@@ -125,7 +147,7 @@ paths:
       tags: [catalog]
       summary: Change a product
       description: |
-        At least one field. Absent fields are left alone.
+        Needs `product.write`. At least one field. Absent fields are left alone.
 
         Changing a price changes what will be charged next, never what was
         charged before: an invoice line keeps the price it was written with.
@@ -148,7 +170,7 @@ paths:
       tags: [catalog]
       summary: Archive a product
       description: |
-        It stops appearing in the catalog. The record stays — an invoice that
+        Needs `product.archive`. It stops appearing in the catalog. The record stays — an invoice that
         sold this product must still be explicable.
       responses:
         "204": { description: Archived }
@@ -164,6 +186,9 @@ components:
   schemas:
     ProductInput:
       type: object
+      description: |
+        `name` is required on create. The 0.2 spelling `priceCents` is still read
+        (as `price_cents`) until the last caller has moved.
       properties:
         name: { type: string }
         sku:
@@ -175,7 +200,7 @@ components:
           description: |
             Free text. ledger-service reads it to pick a revenue account, so a
             realm that keeps books should agree on a vocabulary.
-        priceCents:
+        price_cents:
           type: integer
           description: The list price, in minor units. Money is integer cents everywhere.
         currency: { type: string, minLength: 3, maxLength: 3 }
@@ -186,22 +211,22 @@ components:
 
     Product:
       type: object
-      required: [id, shortId, name]
+      required: [id, short_id, name]
       properties:
         id: { type: string }
-        shortId: { type: string }
+        short_id: { type: string }
         name: { type: string }
         sku: { type: [string, "null"] }
         description: { type: [string, "null"] }
         category: { type: [string, "null"] }
-        priceCents: { type: [integer, "null"] }
+        price_cents: { type: [integer, "null"] }
         currency: { type: [string, "null"] }
         labels:
           type: array
           items: { type: string }
         metadata: { type: object, additionalProperties: true }
-        createdAt: { type: integer }
-        updatedAt: { type: integer }
+        created_at: { type: integer }
+        updated_at: { type: integer }
 
     ServiceManifest:
       type: object
