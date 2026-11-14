@@ -8,19 +8,19 @@ afterAll(() => server.close())
 
 const PROD = {
   id: '019f6a3e-1111-7c71-beff-496d1be3fd1f',
-  shortId: 'prd9x2',
+  short_id: 'prd9x2',
   sku: 'WIDGET-1',
   name: 'Blue Widget',
   description: 'A blue widget',
   category: 'widgets',
-  priceCents: 1250,
+  price_cents: 1250,
   currency: 'USD',
   labels: ['featured'],
   metadata: { color: 'blue' },
-  createdAt: 1784200000000,
-  updatedAt: 1784200000000,
+  created_at: 1784200000000,
+  updated_at: 1784200000000,
 }
-const PROD2 = { ...PROD, id: '019f6a3e-2222-7c71-beff-496d1be3fd1f', shortId: 'prd7k1', sku: 'GADGET-2', name: 'Gadget', priceCents: null, currency: null }
+const PROD2 = { ...PROD, id: '019f6a3e-2222-7c71-beff-496d1be3fd1f', short_id: 'prd7k1', sku: 'GADGET-2', name: 'Gadget', price_cents: null, currency: null }
 
 describe('dtab catalog (list)', () => {
   it('default columns: ID → SKU → NAME → PRICE, no full UUID', async () => {
@@ -62,7 +62,7 @@ describe('dtab catalog (list)', () => {
     mocks.mockGet('/catalog', { products: [PROD] })
     const r = await run(['catalog', '-o', 'json'])
     const parsed = JSON.parse(r.stdout)
-    expect(parsed[0].shortId).toBe('prd9x2')
+    expect(parsed[0].short_id).toBe('prd9x2')
   })
 })
 
@@ -72,7 +72,7 @@ describe('dtab catalog create', () => {
     const r = await run(['catalog', 'create', '--name', 'Blue Widget', '--sku', 'WIDGET-1', '--price', '12.50', '--currency', 'USD', '--category', 'widgets', '--label', 'featured', '--meta', 'color=blue'])
     expect(r.exitCode).toBe(0)
     const body = captured.body as Record<string, unknown>
-    expect(body.priceCents).toBe(1250)
+    expect(body.price_cents).toBe(1250)
     expect(body.currency).toBe('USD')
     expect(body.sku).toBe('WIDGET-1')
     expect(body.labels).toEqual(['featured'])
@@ -104,10 +104,10 @@ describe('dtab catalog get / update / delete', () => {
   })
 
   it('update sends only changed fields', async () => {
-    const captured = mocks.mockPatchCapture('/catalog/prd9x2', { product: { ...PROD, priceCents: 999 } })
+    const captured = mocks.mockPatchCapture('/catalog/prd9x2', { product: { ...PROD, price_cents: 999 } })
     const r = await run(['catalog', 'update', 'prd9x2', '--price', '9.99', '--currency', 'USD'])
     expect(r.exitCode).toBe(0)
-    expect((captured.body as Record<string, unknown>).priceCents).toBe(999)
+    expect((captured.body as Record<string, unknown>).price_cents).toBe(999)
   })
 
   it('delete (rm alias) works', async () => {

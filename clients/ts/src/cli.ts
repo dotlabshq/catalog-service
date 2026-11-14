@@ -21,13 +21,13 @@ export interface CatalogCliDeps {
 
 type ProductRow = {
   id: string
-  shortId: string
+  short_id: string
   sku: string | null
   name: string
   category: string | null
-  priceCents: number | null
+  price_cents: number | null
   currency: string | null
-  createdAt?: number
+  created_at?: number
 }
 
 const die = (e: unknown): never => fatal(e instanceof Error ? e.message : String(e))
@@ -65,12 +65,12 @@ export function buildCatalogCommand(deps: CatalogCliDeps): Command {
     const res = await http.get<{ products: ProductRow[] }>('/catalog').catch(die)
     printOutput(res.products, opts.output, (wide) => {
       table(res.products, [
-        { key: 'shortId', label: 'ID' },
+        { key: 'short_id', label: 'ID' },
         { key: 'sku', label: 'SKU', fmt: (v) => (v as string) ?? '' },
         { key: 'name', label: 'NAME' },
-        { key: 'priceCents', label: 'PRICE', fmt: (_v, row) => fmtPrice((row as ProductRow).priceCents, (row as ProductRow).currency) },
+        { key: 'price_cents', label: 'PRICE', fmt: (_v, row) => fmtPrice((row as ProductRow).price_cents, (row as ProductRow).currency) },
         { key: 'category', label: 'CATEGORY', wide: true, fmt: (v) => (v as string) ?? '' },
-        { key: 'createdAt', label: 'CREATED', wide: true, fmt: (v) => fmtDate(v as number) },
+        { key: 'created_at', label: 'CREATED', wide: true, fmt: (v) => fmtDate(v as number) },
         { key: 'id', label: 'FULL ID', wide: true },
       ] as ColDef<ProductRow>[], { wide, emptyHint: `No products yet.  Run: ${cli} catalog create --name <n>` })
       summary(`${res.products.length} product${res.products.length !== 1 ? 's' : ''}`)
@@ -113,14 +113,14 @@ export function buildCatalogCommand(deps: CatalogCliDeps): Command {
           ...(opts.sku ? { sku: opts.sku } : {}),
           ...(opts.description ? { description: opts.description } : {}),
           ...(opts.category ? { category: opts.category } : {}),
-          ...(opts.price !== undefined ? { priceCents: priceToCents(opts.price) } : {}),
+          ...(opts.price !== undefined ? { price_cents: priceToCents(opts.price) } : {}),
           ...(opts.currency ? { currency: opts.currency } : {}),
           ...(opts.label ? { labels: opts.label } : {}),
           ...(opts.meta ? { metadata: parseKvPairs(opts.meta) } : {}),
         }
         const res = await http.post<{ product: ProductRow }>('/catalog', body).catch(die)
         success(`Product created: ${res.product.name}`)
-        kv([['id', res.product.shortId], ['name', res.product.name], ['price', fmtPrice(res.product.priceCents, res.product.currency)]])
+        kv([['id', res.product.short_id], ['name', res.product.name], ['price', fmtPrice(res.product.price_cents, res.product.currency)]])
       }),
   )
 
@@ -133,10 +133,10 @@ export function buildCatalogCommand(deps: CatalogCliDeps): Command {
         const p = res.product as Record<string, unknown>
         printOutput(p, opts.output, () => {
           kv([
-            ['id', String(p['shortId'])],
+            ['id', String(p['short_id'])],
             ['name', String(p['name'])],
             ['sku', (p['sku'] as string) ?? '—'],
-            ['price', fmtPrice((p['priceCents'] as number) ?? null, (p['currency'] as string) ?? null)],
+            ['price', fmtPrice((p['price_cents'] as number) ?? null, (p['currency'] as string) ?? null)],
             ['category', (p['category'] as string) ?? '—'],
             ['description', (p['description'] as string) ?? '—'],
             ['labels', ((p['labels'] as string[]) ?? []).join(', ') || '—'],
@@ -168,14 +168,14 @@ export function buildCatalogCommand(deps: CatalogCliDeps): Command {
         if (opts.sku !== undefined) body['sku'] = opts.sku
         if (opts.description !== undefined) body['description'] = opts.description
         if (opts.category !== undefined) body['category'] = opts.category
-        if (opts.price !== undefined) body['priceCents'] = priceToCents(opts.price)
+        if (opts.price !== undefined) body['price_cents'] = priceToCents(opts.price)
         if (opts.currency !== undefined) body['currency'] = opts.currency
         if (opts.label !== undefined) body['labels'] = opts.label
         if (opts.meta !== undefined) body['metadata'] = parseKvPairs(opts.meta)
         if (!Object.keys(body).length) { warn('Provide at least one field to update.'); return }
         const res = await http.patch<{ product: ProductRow }>(`/catalog/${ref}`, body).catch(die)
         success('Product updated.')
-        kv([['id', res.product.shortId], ['name', res.product.name], ['price', fmtPrice(res.product.priceCents, res.product.currency)]])
+        kv([['id', res.product.short_id], ['name', res.product.name], ['price', fmtPrice(res.product.price_cents, res.product.currency)]])
       }),
   )
 

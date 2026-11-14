@@ -1,8 +1,9 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
-import { createOrgClient, OrgError } from '@baseworks/org'
-import { requireAuth } from '../lib/auth.js'
+import { requireOrg } from '@baseworks/org/hono'
+import { auditOf, requireAuth } from '../lib/auth.js'
+import { permit, type OrgAccess } from '../lib/org.js'
 import { StoreError, type Store } from '../store.js'
 
 const CreateSchema = z.object({
@@ -10,7 +11,7 @@ const CreateSchema = z.object({
   sku: z.string().min(1).optional(),
   description: z.string().optional(),
   category: z.string().optional(),
-  priceCents: z.number().int().min(0).optional(),
+  price_cents: z.number().int().min(0).optional(),
   currency: z.string().length(3).optional(),
   labels: z.array(z.string()).optional(),
   metadata: z.record(z.unknown()).optional(),
@@ -21,11 +22,24 @@ const UpdateSchema = z.object({
   sku: z.string().min(1).optional(),
   description: z.string().optional(),
   category: z.string().optional(),
-  priceCents: z.number().int().min(0).optional(),
+  price_cents: z.number().int().min(0).optional(),
   currency: z.string().length(3).optional(),
   labels: z.array(z.string()).optional(),
   metadata: z.record(z.unknown()).optional(),
 }).refine((d) => Object.keys(d).length > 0, { message: 'Provide at least one field' })
+
+/**
+ * The wire is snake_case (ADR 0003). Until 0.3.0 this service spoke camelCase,
+ * and callers that still do are read the way they meant: the one field that
+ * changed, `priceCents`, is renamed on the way in (the new name wins when both
+ * are sent). Answers are snake_case only. To be removed once no caller sends it.
+ */
+function renamed(body: unknown): unknown {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return body
+  const { priceCents, ...rest } = body as Record<string, unknown>
+  return priceCents !== undefined && rest['price_cents'] === undefined ? { ...rest, price_cents: priceCents } : rest
+}
+const body = <T extends z.ZodTypeAny>(schema: T) => zValidator('json', z.preprocess(renamed, schema) as unknown as T)
 
 function fail(err: unknown): never {
   if (err instanceof StoreError) throw err
@@ -33,48 +47,31 @@ function fail(err: unknown): never {
 }
 
 /**
- * catalog-service routes. Every request is authenticated (identity JWT → userId),
- * bound to an org via `X-Org-Id` whose membership is verified against org-service
- * (the PDP) by forwarding the caller's token. The org id is the foldbase tenant.
+ * catalog-service routes. They are the API: app.ts mounts them under `/api`,
+ * and a gateway publishes that at `/v1/catalog` by replacing the prefix
+ * (workspace ADR 0003), so the service never encodes where it is published.
  *
- * Routes live at the service ROOT. A gateway publishes the realm at
- * `/v1/catalog/...` and strips that prefix (ADR-042 §4), so the service never
- * encodes where it happens to be mounted; app.ts also mounts them under `/v1`
- * for callers that predate the gateway.
+ * Every request is:
+ *   1. authenticated (`requireAuth`: session, API token, agent, key or service), then
+ *   2. bound to an org via `X-Org-Id`, resolved to the canonical id and
+ *      checked for membership at org-service (`requireOrg`). The org id is the
+ *      foldbase tenant. Then
+ *   3. allowed or refused by permission: org-service says which of this
+ *      service's actions the caller may do there, and the route names the one
+ *      it needs. No role is named here.
  */
-export function catalogRouter(store: Store, orgBaseUrl: string) {
+export function catalogRouter(store: Store, orgBaseUrl: string, org: OrgAccess) {
   const app = new Hono()
   app.use('*', requireAuth)
 
-  app.use('*', async (c, next) => {
-    // `X-Org-Id` may carry an id, a slug or a short id (ADR-042 §3), and the org
-    // id is also the storage tenant — so the header is resolved before anything
-    // is stored against it. Taken verbatim, `acme` and the org's real id would
-    // be two separate tenants for one organization, and which one you saw would
-    // depend on which client wrote last.
-    const orgRef = c.req.header('X-Org-Id')
-    if (!orgRef) {
-      return c.json({ error: 'org_required', message: 'Missing X-Org-Id — run `use <org>` first' }, 400)
-    }
-    const bearer = c.req.header('Authorization')!.slice(7)
-    const org = createOrgClient({ baseUrl: orgBaseUrl, token: bearer })
-    try {
-      const { role, via } = await org.effectiveRole(orgRef)
-      if (role === 'none') return c.json({ error: 'forbidden', message: 'Not a member of this org' }, 403)
-      c.set('orgId' as never, (via?.scope_id ?? orgRef) as never)
-    } catch (e) {
-      if (e instanceof OrgError && e.status === 404) {
-        return c.json({ error: 'org_not_found', message: 'Active org does not exist — run `use <org>` with a valid org' }, 404)
-      }
-      return c.json({ error: 'authz_unavailable', message: (e as Error).message }, 502)
-    }
-    return next()
-  })
+  // `X-Org-Id` may carry an id, a slug or a short id (ADR-042 §3), and the org
+  // id is also the storage tenant, so the header is resolved before anything
+  // is stored against it: `acme` and the org's real id are one tenant.
+  app.use('*', requireOrg({ base_url: orgBaseUrl }))
 
-  const orgOf = (c: { get: (k: string) => unknown }) => c.get('orgId') as string
-  const actorOf = (c: { get: (k: string) => unknown }) => (c.get('auth') as { userId: string }).userId
+  const orgOf = (c: { get: (k: string) => unknown }) => c.get('org_id') as string
 
-  app.get('/catalog', async (c) => {
+  app.get('/catalog', permit(org, 'product.read'), async (c) => {
     const orgId = orgOf(c)
     const sku = c.req.query('sku')
     if (sku) {
@@ -87,24 +84,24 @@ export function catalogRouter(store: Store, orgBaseUrl: string) {
     return c.json({ products: await store.listProducts(orgId, { limit, offset }) })
   })
 
-  app.get('/catalog/:ref', async (c) => {
+  app.get('/catalog/:ref', permit(org, 'product.read'), async (c) => {
     const product = await store.getProduct(orgOf(c), c.req.param('ref'))
     if (!product) return c.json({ error: 'not_found', message: 'Product not found' }, 404)
     return c.json({ product })
   })
 
-  app.post('/catalog', zValidator('json', CreateSchema), async (c) => {
-    const product = await store.createProduct(orgOf(c), c.req.valid('json'), actorOf(c)).catch(fail)
+  app.post('/catalog', permit(org, 'product.write'), body(CreateSchema), async (c) => {
+    const product = await store.createProduct(orgOf(c), c.req.valid('json'), auditOf(c, { org_id: orgOf(c) })).catch(fail)
     return c.json({ product }, 201)
   })
 
-  app.patch('/catalog/:ref', zValidator('json', UpdateSchema), async (c) => {
-    const product = await store.updateProduct(orgOf(c), c.req.param('ref'), c.req.valid('json'), actorOf(c)).catch(fail)
+  app.patch('/catalog/:ref', permit(org, 'product.write'), body(UpdateSchema), async (c) => {
+    const product = await store.updateProduct(orgOf(c), c.req.param('ref'), c.req.valid('json'), auditOf(c, { org_id: orgOf(c) })).catch(fail)
     return c.json({ product })
   })
 
-  app.delete('/catalog/:ref', async (c) => {
-    await store.archiveProduct(orgOf(c), c.req.param('ref'), actorOf(c)).catch(fail)
+  app.delete('/catalog/:ref', permit(org, 'product.archive'), async (c) => {
+    await store.archiveProduct(orgOf(c), c.req.param('ref'), auditOf(c, { org_id: orgOf(c) })).catch(fail)
     return c.body(null, 204)
   })
 

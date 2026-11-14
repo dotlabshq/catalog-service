@@ -1,18 +1,23 @@
-import type { Product, CreateProductInput, UpdateProductInput } from './types.js'
+import type { Product, WireProduct, CreateProductInput, UpdateProductInput } from './types.js'
 
 export type {
   Product,
   ProductRow,
   CreateProductInput,
   UpdateProductInput,
+  WireProduct,
 } from './types.js'
 
 export interface CatalogClientOptions {
   /** Base URL of catalog-service (resolved by the SDK, e.g. CATALOG_SERVICE_URL). */
-  baseUrl: string
+  base_url?: string
   /** Bearer token — the caller's identity JWT. */
   token?: string
   /** Active org id — sent as X-Org-Id (products are org-scoped, tenant = org). */
+  org_id?: string
+  /** @deprecated Read `base_url`. Accepted until the last caller has moved. */
+  baseUrl?: string
+  /** @deprecated Read `org_id`. Accepted until the last caller has moved. */
   orgId?: string
   /** Injectable fetch (tests / non-global environments). */
   fetch?: typeof fetch
@@ -53,20 +58,23 @@ export class CatalogClient {
   private readonly baseUrl: string
   private readonly fetchImpl: typeof fetch
   constructor(private readonly opts: CatalogClientOptions) {
-    this.baseUrl = opts.baseUrl.replace(/\/$/, '')
+    const base = opts.base_url ?? opts.baseUrl
+    if (!base) throw new Error('CatalogClient needs base_url')
+    this.baseUrl = base.replace(/\/$/, '')
     this.fetchImpl = opts.fetch ?? globalThis.fetch
   }
 
   /** Return a new client scoped to a different org. */
   withOrg(orgId: string): CatalogClient {
-    return new CatalogClient({ ...this.opts, orgId })
+    return new CatalogClient({ ...this.opts, org_id: orgId, orgId })
   }
 
   private headers(json: boolean, extra: Record<string, string> = {}): Record<string, string> {
     const h: Record<string, string> = {}
     if (json) h['Content-Type'] = 'application/json'
     if (this.opts.token) h['Authorization'] = `Bearer ${this.opts.token}`
-    if (this.opts.orgId) h['X-Org-Id'] = this.opts.orgId
+    const org = this.opts.org_id ?? this.opts.orgId // deprecated spelling, read until the last caller has moved
+    if (org) h['X-Org-Id'] = org
     return { ...h, ...extra }
   }
 
@@ -106,28 +114,39 @@ export class CatalogClient {
     if (opts.limit !== undefined) q.set('limit', String(opts.limit))
     if (opts.offset !== undefined) q.set('offset', String(opts.offset))
     const qs = q.toString()
-    const { products } = await this.api<{ products: Product[] }>('GET', `/catalog${qs ? `?${qs}` : ''}`)
-    return products
+    const { products } = await this.api<{ products: WireProduct[] }>('GET', `/catalog${qs ? `?${qs}` : ''}`)
+    return products.map(withAliases)
   }
   async get(ref: string): Promise<Product> {
-    const { product } = await this.api<{ product: Product }>('GET', `/catalog/${ref}`)
-    return product
+    const { product } = await this.api<{ product: WireProduct }>('GET', `/catalog/${encodeURIComponent(ref)}`)
+    return withAliases(product)
   }
   async getBySku(sku: string): Promise<Product> {
-    const { product } = await this.api<{ product: Product }>('GET', `/catalog?sku=${encodeURIComponent(sku)}`)
-    return product
+    const { product } = await this.api<{ product: WireProduct }>('GET', `/catalog?sku=${encodeURIComponent(sku)}`)
+    return withAliases(product)
   }
   async create(input: CreateProductInput): Promise<Product> {
-    const { product } = await this.api<{ product: Product }>('POST', '/catalog', input)
-    return product
+    const { product } = await this.api<{ product: WireProduct }>('POST', '/catalog', snakeInput(input))
+    return withAliases(product)
   }
   async update(ref: string, input: UpdateProductInput): Promise<Product> {
-    const { product } = await this.api<{ product: Product }>('PATCH', `/catalog/${ref}`, input)
-    return product
+    const { product } = await this.api<{ product: WireProduct }>('PATCH', `/catalog/${encodeURIComponent(ref)}`, snakeInput(input))
+    return withAliases(product)
   }
   async delete(ref: string): Promise<void> {
-    await this.api('DELETE', `/catalog/${ref}`)
+    await this.api('DELETE', `/catalog/${encodeURIComponent(ref)}`)
   }
+}
+
+/** The service answers snake_case; the camelCase names of 0.2 are set beside them, deprecated. */
+function withAliases(p: WireProduct): Product {
+  return { ...p, shortId: p.short_id, priceCents: p.price_cents, createdAt: p.created_at, updatedAt: p.updated_at }
+}
+
+/** A body in the wire's spelling: the deprecated `priceCents` becomes `price_cents` (the new name wins). */
+function snakeInput<T extends { price_cents?: number; priceCents?: number }>(input: T): Omit<T, 'priceCents'> {
+  const { priceCents, ...rest } = input
+  return priceCents !== undefined && rest.price_cents === undefined ? { ...rest, price_cents: priceCents } : rest
 }
 
 /** Factory used by the SDK capability registry. */
