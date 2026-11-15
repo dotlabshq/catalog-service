@@ -116,7 +116,7 @@ camelCase names), so the rows come out without them. Deploy foldbase
 
 ## Deprecated names
 
-`@baseworks/catalog` 0.3.0 keeps what 0.2 exposed, so a service that has not
+`@baseworks/catalog` 1.0.0 keeps what 0.2 exposed, so a service that has not
 moved still builds (stripe-service builds its client the old way):
 
 - client options `baseUrl` and `orgId` beside `base_url` and `org_id`;
